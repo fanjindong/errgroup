@@ -62,6 +62,7 @@ func TestErrGroup_Error(t *testing.T) {
 		{name: "cancel", args: args{eg: NewCancel(ctx), n: 10, f: func(ctx context.Context) error {
 			lock.Lock()
 			defer lock.Unlock()
+			time.Sleep(10 * time.Millisecond)
 			select {
 			case <-ctx.Done():
 				return nil
