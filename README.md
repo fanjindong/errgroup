@@ -1,10 +1,10 @@
 # errgroup
 
-`errgroup`包是`sync/errgroup`包的扩展，其核心是管理一组`gotoutine`的行为。当发生`error`时，控制组内其他`goroutine`的行为： 取消所有执行、继续所有执行。
+`errgroup`包是`sync/errgroup`包的扩展，其核心是管理一组`gotoutine`的行为。当发生`error`or`panic`时，控制组内其他`goroutine`的行为： 取消所有执行、继续所有执行。
 
 `errgroup` 包含三种常用方式
 
-1. `NewContinue` 此时不会因为一个任务失败导致所有任务被 cancel:
+1. `NewContinue` 此时不会因为一个任务失败导致所有任务被 cancel
 
 ```go
 eg := &errgroup.NewContinue(ctx)
@@ -15,7 +15,7 @@ eg.Go(func (ctx context.Context) {
 eg.Wait()
 ```
 
-2. `NewCancel` 此时如果有一个任务失败会导致所有*未进行或进行中*的任务被 cancel:
+2. `NewCancel` 此时如果有一个任务失败会导致所有**未进行或进行中**的任务被 cancel
 
 ```go
 eg := errgroup.NewCancel(ctx)
@@ -26,7 +26,7 @@ eg.Go(func (ctx context.Context) {
 eg.Wait()
 ```
 
-3. 设置最大并行数 SetMaxProcess 对以上三种使用方式均起效 :
+3. 设置最大并行数 SetMaxProcess 对以上使用方式均起效
 
 ```go
 eg := errgroup.NewCancel(ctx, WithMaxProcess(2))
