@@ -3,7 +3,7 @@
 // license that can be found in the LICENSE file.
 
 // Package errgroup provides synchronization, error propagation, and Context
-// cancelation for groups of goroutines working on subtasks of a common task.
+// cancellation for groups of goroutines working on subtasks of a common task.
 
 package errgroup
 
@@ -14,49 +14,56 @@ import (
 	"sync"
 )
 
-// A Group is a collection of goroutines working on subtasks that are part of
-// the same overall task.
-//
-// A zero Group is valid and does not cancel on error.
-type Group struct {
-	err     error
+type fc func(ctx context.Context) error
+type IGroup interface {
+	maxProcess(int)
+	Do(fc)
+	Wait() error
+}
+
+type CancelGroup struct {
+	cancel  func()
 	wg      sync.WaitGroup
 	errOnce sync.Once
+	err     error
+	ctx     context.Context
 
-	workerOnce sync.Once
-	ch         chan func(ctx context.Context) error
-	chs        []func(ctx context.Context) error
-
-	ctx    context.Context
-	cancel func()
+	ch  chan fc
+	chs []fc
 }
 
-// WithContext create a Group.
-// given function from Go will receive this context,
-func WithContext(ctx context.Context) *Group {
-	return &Group{ctx: ctx}
-}
-
-// WithCancel create a new Group and an associated Context derived from ctx.
-//
-// given function from Go will receive context derived from this ctx,
-// The derived Context is canceled the first time a function passed to Go
-// returns a non-nil error or the first time Wait returns, whichever occurs
-// first.
-func WithCancel(ctx context.Context) *Group {
+func NewCancel(ctx context.Context, ops ...IOption) IGroup {
 	ctx, cancel := context.WithCancel(ctx)
-	return &Group{ctx: ctx, cancel: cancel}
+	g := &CancelGroup{cancel: cancel, ctx: ctx}
+	for _, op := range ops {
+		op(g)
+	}
+	return g
 }
 
-func (g *Group) do(f func(ctx context.Context) error) {
-	ctx := g.ctx
-	if ctx == nil {
-		ctx = context.Background()
+// Go calls the given function in a new goroutine.
+//
+// The first call to return a non-nil error cancels the group; its error will be
+// returned by Wait.
+func (g *CancelGroup) Do(f fc) {
+	g.wg.Add(1)
+	if g.ch == nil {
+		go g.do(f)
+		return
 	}
+	select {
+	case g.ch <- f:
+		go g.do(f)
+	default:
+		g.chs = append(g.chs, f)
+	}
+}
+
+func (g *CancelGroup) do(f fc) {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 64<<10)
+			buf := make([]byte, 1<<16)
 			buf = buf[:runtime.Stack(buf, false)]
 			err = fmt.Errorf("errgroup: panic recovered: %s\n%s", r, buf)
 		}
@@ -68,59 +75,108 @@ func (g *Group) do(f func(ctx context.Context) error) {
 				}
 			})
 		}
+		if g.ch != nil {
+			<-g.ch
+		}
 		g.wg.Done()
 	}()
-	err = f(ctx)
+	err = f(g.ctx)
 }
 
-// SetMaxProcess set max goroutine to work.
-func (g *Group) SetMaxProcess(n int) {
-	if n <= 0 {
-		panic("errgroup: SetMaxProcess must great than 0")
-	}
-	g.workerOnce.Do(func() {
-		g.ch = make(chan func(context.Context) error, n)
-		for i := 0; i < n; i++ {
-			go func() {
-				for f := range g.ch {
-					g.do(f)
-				}
-			}()
+// Wait blocks until all function calls from the Go method have returned, then
+// returns the first non-nil error (if any) from them.
+func (g *CancelGroup) Wait() error {
+	if len(g.chs) > 0 {
+		for _, f := range g.chs {
+			g.ch <- f
+			go g.do(f)
 		}
-	})
+	}
+	g.wg.Wait()
+	if g.cancel != nil {
+		g.cancel()
+	}
+	if g.ch != nil {
+		close(g.ch)
+	}
+	return g.err
+}
+
+func (g *CancelGroup) maxProcess(n int) {
+	g.ch = make(chan fc, n)
+}
+
+type ContinueGroup struct {
+	wg      sync.WaitGroup
+	errOnce sync.Once
+	err     error
+	ctx     context.Context
+
+	ch  chan fc
+	chs []fc
+}
+
+func NewContinue(ctx context.Context, ops ...IOption) IGroup {
+	g := &ContinueGroup{ctx: ctx}
+	for _, op := range ops {
+		op(g)
+	}
+	return g
 }
 
 // Go calls the given function in a new goroutine.
 //
 // The first call to return a non-nil error cancels the group; its error will be
 // returned by Wait.
-func (g *Group) Go(f func(ctx context.Context) error) {
+func (g *ContinueGroup) Do(f fc) {
 	g.wg.Add(1)
-	if g.ch != nil {
-		select {
-		case g.ch <- f:
-		default:
-			g.chs = append(g.chs, f)
-		}
+	if g.ch == nil {
+		go g.do(f)
 		return
 	}
-	go g.do(f)
+	select {
+	case g.ch <- f:
+		go g.do(f)
+	default:
+		g.chs = append(g.chs, f)
+	}
+}
+
+func (g *ContinueGroup) do(f fc) {
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 1<<16)
+			buf = buf[:runtime.Stack(buf, false)]
+			err = fmt.Errorf("errgroup: panic recovered: %s\n%s", r, buf)
+		}
+		if err != nil {
+			g.errOnce.Do(func() { g.err = err })
+		}
+		if g.ch != nil {
+			<-g.ch
+		}
+		g.wg.Done()
+	}()
+	err = f(g.ctx)
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the first non-nil error (if any) from them.
-func (g *Group) Wait() error {
-	if g.ch != nil {
+func (g *ContinueGroup) Wait() error {
+	if len(g.chs) > 0 {
 		for _, f := range g.chs {
 			g.ch <- f
+			go g.do(f)
 		}
 	}
 	g.wg.Wait()
 	if g.ch != nil {
-		close(g.ch) // let all receiver exit
-	}
-	if g.cancel != nil {
-		g.cancel()
+		close(g.ch)
 	}
 	return g.err
+}
+
+func (g *ContinueGroup) maxProcess(n int) {
+	g.ch = make(chan fc, n)
 }

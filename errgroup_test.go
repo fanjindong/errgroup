@@ -2,301 +2,220 @@ package errgroup
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"math"
-	"net/http"
-	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-type ABC struct {
-	CBA int
-}
+func TestErrGroup_Wait(t *testing.T) {
+	var number int32
+	var ctx context.Context = context.Background()
 
-func TestNormal(t *testing.T) {
-	var (
-		abcs = make(map[int]*ABC)
-		g    Group
-		err  error
-	)
-	for i := 0; i < 10; i++ {
-		abcs[i] = &ABC{CBA: i}
+	type args struct {
+		eg IGroup
+		f  fc
+		n  int
 	}
-	g.Go(func(context.Context) (err error) {
-		abcs[1].CBA++
-		return
-	})
-	g.Go(func(context.Context) (err error) {
-		abcs[2].CBA++
-		return
-	})
-	if err = g.Wait(); err != nil {
-		t.Log(err)
+	tests := []struct {
+		name      string
+		args      args
+		want      int32
+		wantError bool
+	}{
+		{name: "continue", args: args{eg: NewContinue(ctx), n: 10, f: func(ctx context.Context) error { atomic.AddInt32(&number, 1); return nil }}, want: 10},
+		{name: "cancel", args: args{eg: NewCancel(ctx), n: 10, f: func(ctx context.Context) error { atomic.AddInt32(&number, 1); return nil }}, want: 20},
 	}
-	t.Log(abcs)
-}
-
-func sleep1s(context.Context) error {
-	time.Sleep(time.Second)
-	return nil
-}
-
-func TestGOMAXPROCS(t *testing.T) {
-	// 没有并发数限制
-	g := Group{}
-	now := time.Now()
-	g.Go(sleep1s)
-	g.Go(sleep1s)
-	g.Go(sleep1s)
-	g.Go(sleep1s)
-	g.Wait()
-	sec := math.Round(time.Since(now).Seconds())
-	if sec != 1 {
-		t.FailNow()
-	}
-	// 限制并发数
-	g2 := Group{}
-	g2.SetMaxProcess(2)
-	now = time.Now()
-	g2.Go(sleep1s)
-	g2.Go(sleep1s)
-	g2.Go(sleep1s)
-	g2.Go(sleep1s)
-	g2.Wait()
-	sec = math.Round(time.Since(now).Seconds())
-	if sec != 2 {
-		t.FailNow()
-	}
-	// context canceled
-	var canceled bool
-	g3 := WithCancel(context.Background())
-	g3.SetMaxProcess(2)
-	g3.Go(func(context.Context) error {
-		return fmt.Errorf("error for testing rgroup context")
-	})
-	g3.Go(func(ctx context.Context) error {
-		time.Sleep(time.Second)
-		select {
-		case <-ctx.Done():
-			canceled = true
-		default:
-		}
-		return nil
-	})
-	g3.Wait()
-	if !canceled {
-		t.FailNow()
-	}
-}
-
-func TestRecover(t *testing.T) {
-	var (
-		abcs = make(map[int]*ABC)
-		g    Group
-		err  error
-	)
-	g.Go(func(context.Context) (err error) {
-		abcs[1].CBA++
-		return
-	})
-	g.Go(func(context.Context) (err error) {
-		abcs[2].CBA++
-		return
-	})
-	if err = g.Wait(); err != nil {
-		t.Logf("error:%+v", err)
-		return
-	}
-	t.FailNow()
-}
-
-func TestRecover2(t *testing.T) {
-	var (
-		g   Group
-		err error
-	)
-	g.Go(func(context.Context) (err error) {
-		panic("2233")
-	})
-	if err = g.Wait(); err != nil {
-		t.Logf("error:%+v", err)
-		return
-	}
-	t.FailNow()
-}
-
-var (
-	Web   = fakeSearch("web")
-	Image = fakeSearch("image")
-	Video = fakeSearch("video")
-)
-
-type Result string
-type Search func(ctx context.Context, query string) (Result, error)
-
-func fakeSearch(kind string) Search {
-	return func(_ context.Context, query string) (Result, error) {
-		return Result(fmt.Sprintf("%s result for %q", kind, query)), nil
-	}
-}
-
-// JustErrors illustrates the use of a Group in place of a sync.WaitGroup to
-// simplify goroutine counting and error handling. This example is derived from
-// the sync.WaitGroup example at https://golang.org/pkg/sync/#example_WaitGroup.
-func ExampleGroup_justErrors() {
-	var g Group
-	var urls = []string{
-		"http://www.golang.org/",
-		"http://www.google.com/",
-		"http://www.somestupidname.com/",
-	}
-	for _, url := range urls {
-		// Launch a goroutine to fetch the URL.
-		url := url // https://golang.org/doc/faq#closures_and_goroutines
-		g.Go(func(context.Context) error {
-			// Fetch the URL.
-			resp, err := http.Get(url)
-			if err == nil {
-				resp.Body.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i := 0; i < tt.args.n; i++ {
+				tt.args.eg.Do(tt.args.f)
 			}
-			return err
+			gotErr := tt.args.eg.Wait()
+			if (gotErr != nil) != tt.wantError {
+				t.Errorf("TestErrGroup_Wait gotErr: %v, wantErr: %v", gotErr, tt.wantError)
+			}
+			if number != tt.want {
+				t.Errorf("TestErrGroup_Wait got: %v, want: %v", number, tt.want)
+			}
 		})
 	}
-	// Wait for all HTTP fetches to complete.
-	if err := g.Wait(); err == nil {
-		fmt.Println("Successfully fetched all URLs.")
-	}
 }
 
-// Parallel illustrates the use of a Group for synchronizing a simple parallel
-// task: the "Google Search 2.0" function from
-// https://talks.golang.org/2012/concurrency.slide#46, augmented with a Context
-// and error-handling.
-func ExampleGroup_parallel() {
-	Google := func(ctx context.Context, query string) ([]Result, error) {
-		g := WithContext(ctx)
+func TestErrGroup_Error(t *testing.T) {
+	var number int32
+	var ctx context.Context = context.Background()
+	var lock sync.Mutex
 
-		searches := []Search{Web, Image, Video}
-		results := make([]Result, len(searches))
-		for i, search := range searches {
-			i, search := i, search // https://golang.org/doc/faq#closures_and_goroutines
-			g.Go(func(context.Context) error {
-				result, err := search(ctx, query)
-				if err == nil {
-					results[i] = result
-				}
-				return err
-			})
-		}
-		if err := g.Wait(); err != nil {
-			return nil, err
-		}
-		return results, nil
+	type args struct {
+		eg IGroup
+		f  fc
+		n  int
 	}
-
-	results, err := Google(context.Background(), "golang")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return
-	}
-	for _, result := range results {
-		fmt.Println(result)
-	}
-
-	// Output:
-	// web result for "golang"
-	// image result for "golang"
-	// video result for "golang"
-}
-
-func TestZeroGroup(t *testing.T) {
-	err1 := errors.New("rgroup_test: 1")
-	err2 := errors.New("rgroup_test: 2")
-
-	cases := []struct {
-		errs []error
+	tests := []struct {
+		name      string
+		args      args
+		want      int32
+		wantError bool
 	}{
-		{errs: []error{}},
-		{errs: []error{nil}},
-		{errs: []error{err1}},
-		{errs: []error{err1, nil}},
-		{errs: []error{err1, nil, err2}},
+		{name: "cancel", args: args{eg: NewCancel(ctx), n: 10, f: func(ctx context.Context) error {
+			lock.Lock()
+			defer lock.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				if number++; number == 5 {
+					return fmt.Errorf("limit 5")
+				}
+			}
+			return nil
+		}}, want: 5, wantError: true},
+		{name: "continue", args: args{eg: NewContinue(ctx), n: 10, f: func(ctx context.Context) error {
+			lock.Lock()
+			defer lock.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				if number++; number == 5 {
+					return fmt.Errorf("limit 5")
+				}
+			}
+			return nil
+		}}, want: 10, wantError: true},
 	}
-
-	for _, tc := range cases {
-		var g Group
-
-		var firstErr error
-		for i, err := range tc.errs {
-			err := err
-			g.Go(func(context.Context) error { return err })
-
-			if firstErr == nil && err != nil {
-				firstErr = err
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			number = 0
+			for i := 0; i < tt.args.n; i++ {
+				tt.args.eg.Do(tt.args.f)
 			}
-
-			if gErr := g.Wait(); gErr != firstErr {
-				t.Errorf("after g.Go(func() error { return err }) for err in %v\n"+
-					"g.Wait() = %v; want %v", tc.errs[:i+1], err, firstErr)
+			gotErr := tt.args.eg.Wait()
+			if (gotErr != nil) != tt.wantError {
+				t.Errorf("TestErrGroup_Wait gotErr: %v, wantErr: %v", gotErr, tt.wantError)
 			}
-		}
+			if number != tt.want {
+				t.Errorf("TestErrGroup_Wait got: %v, want: %v", number, tt.want)
+			}
+		})
 	}
 }
 
-func TestWithCancel(t *testing.T) {
-	g := WithCancel(context.Background())
-	g.Go(func(ctx context.Context) error {
-		time.Sleep(100 * time.Millisecond)
-		return fmt.Errorf("boom")
-	})
-	var doneErr error
-	g.Go(func(ctx context.Context) error {
-		select {
-		case <-ctx.Done():
-			doneErr = ctx.Err()
-		}
-		return doneErr
-	})
-	g.Wait()
-	if doneErr != context.Canceled {
-		t.Error("error should be Canceled")
+func TestErrGroup_Panic(t *testing.T) {
+	var number int32
+	var ctx context.Context = context.Background()
+	var lock sync.Mutex
+
+	type args struct {
+		eg IGroup
+		f  fc
+		n  int
+	}
+	tests := []struct {
+		name      string
+		args      args
+		want      int32
+		wantError bool
+	}{
+		{name: "cancel", args: args{eg: NewCancel(ctx), n: 10, f: func(ctx context.Context) error {
+			lock.Lock()
+			defer lock.Unlock()
+			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				if number++; number == 5 {
+					panic("limit 5")
+				}
+			}
+			return nil
+		}}, want: 5, wantError: true},
+		{name: "continue", args: args{eg: NewContinue(ctx), n: 10, f: func(ctx context.Context) error {
+			lock.Lock()
+			defer lock.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				if number++; number == 5 {
+					panic("limit 5")
+				}
+			}
+			return nil
+		}}, want: 10, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			number = 0
+			for i := 0; i < tt.args.n; i++ {
+				tt.args.eg.Do(tt.args.f)
+			}
+			gotErr := tt.args.eg.Wait()
+			//t.Log(gotErr)
+			if (gotErr != nil) != tt.wantError {
+				t.Errorf("TestErrGroup_Wait gotErr: %v, wantErr: %v", gotErr, tt.wantError)
+			}
+			if number != tt.want {
+				t.Errorf("TestErrGroup_Wait got: %v, want: %v", number, tt.want)
+			}
+		})
 	}
 }
 
-func TestExampleGroup_demo(t *testing.T) {
-	c := context.Background()
-	eg := WithContext(c)
+func TestErrGroup_WithMaxProcess(t *testing.T) {
+	var number int32
+	var ctx context.Context = context.Background()
 
-	res1 := make(map[string]string)
-	eg.Go(func(ctx context.Context) error {
-		// do something
-		// 结果绑定至指针变量
-		res1["message"] = "success"
-		return nil
-	})
-
-	type S struct {
-		Code int
+	type args struct {
+		eg IGroup
+		f  fc
+		n  int
 	}
-	var res2 *S
-	eg.Go(func(ctx context.Context) error {
-		// do something
-		// 结果绑定至指针变量
-		res2 = &S{Code: 1}
-		return nil
-	})
-
-	if err := eg.Wait(); err != nil {
-		panic(err)
+	tests := []struct {
+		name      string
+		args      args
+		want      int32
+		wantError bool
+	}{
+		{name: "cancel", args: args{eg: NewCancel(ctx, WithMaxProcess(1)), n: 10, f: func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				if number++; number == 5 {
+					return fmt.Errorf("limit 5")
+				}
+			}
+			return nil
+		}}, want: 5, wantError: true},
+		{name: "continue", args: args{eg: NewContinue(ctx, WithMaxProcess(1)), n: 10, f: func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				if number++; number == 5 {
+					return fmt.Errorf("limit 5")
+				}
+			}
+			return nil
+		}}, want: 10, wantError: true},
 	}
-
-	if res1["message"] != "success" {
-		t.Fatal(res1["message"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			number = 0
+			for i := 0; i < tt.args.n; i++ {
+				tt.args.eg.Do(tt.args.f)
+			}
+			gotErr := tt.args.eg.Wait()
+			if (gotErr != nil) != tt.wantError {
+				t.Errorf("TestErrGroup_Wait gotErr: %v, wantErr: %v", gotErr, tt.wantError)
+			}
+			if number != tt.want {
+				t.Errorf("TestErrGroup_Wait got: %v, want: %v", number, tt.want)
+			}
+		})
 	}
-	if res2.Code != 1 {
-		t.Fatal(res2.Code)
-	}
-	return
 }
