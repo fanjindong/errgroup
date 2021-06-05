@@ -2,6 +2,8 @@
 
 `errgroup`包是`sync/errgroup`包的扩展，其核心是管理一组`gotoutine`的行为。当发生`error`or`panic`时，控制组内其他`goroutine`的行为： 取消所有执行、继续所有执行。
 
+![image](./images/BatEaredFox_EN-AU12936466242_1920x1080.jpg)
+
 `errgroup` 包含三种常用方式
 
 1. `NewContinue` 此时不会因为一个任务失败导致所有任务被 cancel
