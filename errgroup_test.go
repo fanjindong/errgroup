@@ -30,7 +30,7 @@ func TestErrGroup_Wait(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for i := 0; i < tt.args.n; i++ {
-				tt.args.eg.Do(tt.args.f)
+				tt.args.eg.Go(tt.args.f)
 			}
 			gotErr := tt.args.eg.Wait()
 			if (gotErr != nil) != tt.wantError {
@@ -91,7 +91,7 @@ func TestErrGroup_Error(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			number = 0
 			for i := 0; i < tt.args.n; i++ {
-				tt.args.eg.Do(tt.args.f)
+				tt.args.eg.Go(tt.args.f)
 			}
 			gotErr := tt.args.eg.Wait()
 			if (gotErr != nil) != tt.wantError {
@@ -152,7 +152,7 @@ func TestErrGroup_Panic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			number = 0
 			for i := 0; i < tt.args.n; i++ {
-				tt.args.eg.Do(tt.args.f)
+				tt.args.eg.Go(tt.args.f)
 			}
 			gotErr := tt.args.eg.Wait()
 			//t.Log(gotErr)
@@ -208,7 +208,7 @@ func TestErrGroup_WithMaxProcess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			number = 0
 			for i := 0; i < tt.args.n; i++ {
-				tt.args.eg.Do(tt.args.f)
+				tt.args.eg.Go(tt.args.f)
 			}
 			gotErr := tt.args.eg.Wait()
 			if (gotErr != nil) != tt.wantError {
