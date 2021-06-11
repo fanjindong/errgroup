@@ -17,7 +17,7 @@ import (
 type fc func(ctx context.Context) error
 type IGroup interface {
 	maxProcess(int)
-	Do(fc)
+	Go(fc)
 	Wait() error
 }
 
@@ -45,7 +45,7 @@ func NewCancel(ctx context.Context, ops ...IOption) IGroup {
 //
 // The first call to return a non-nil error cancels the group; its error will be
 // returned by Wait.
-func (g *CancelGroup) Do(f fc) {
+func (g *CancelGroup) Go(f fc) {
 	g.wg.Add(1)
 	if g.ch == nil {
 		go g.do(f)
@@ -128,7 +128,7 @@ func NewContinue(ctx context.Context, ops ...IOption) IGroup {
 //
 // The first call to return a non-nil error cancels the group; its error will be
 // returned by Wait.
-func (g *ContinueGroup) Do(f fc) {
+func (g *ContinueGroup) Go(f fc) {
 	g.wg.Add(1)
 	if g.ch == nil {
 		go g.do(f)
