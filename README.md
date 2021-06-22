@@ -4,6 +4,12 @@
 
 ![image](./images/BatEaredFox_EN-AU12936466242_1920x1080.jpg)
 
+## Install
+
+`go get -u github.com/fanjindong/errgroup`
+
+## Fast Start
+
 `errgroup` 包含三种常用方式
 
 1. `NewContinue` 此时不会因为一个任务失败导致所有任务被 cancel
