@@ -1,6 +1,9 @@
 # errgroup
 
-`errgroup`包是`sync/errgroup`包的扩展，其核心是管理一组`gotoutine`的行为。当发生`error`or`panic`时，控制组内其他`goroutine`的行为： 取消所有执行、继续所有执行。
+[中文文档](./README_zh.md)
+
+The `errgroup` package is an extension of the `sync/errgroup` package, and its core is to manage the behavior of a set of `gotoutines`. 
+Control the behavior of other `goroutines` in the group when `error` or `panic` occurs: cancel all executions or continue all executions.
 
 ![image](./images/BatEaredFox_EN-AU12936466242_1920x1080.jpg)
 
@@ -10,31 +13,31 @@
 
 ## Fast Start
 
-`errgroup` 包含三种常用方式
+`errgroup` contains three common methods
 
-1. `NewContinue` 此时不会因为一个任务失败导致所有任务被 cancel
+1. `NewContinue` At this point, all tasks will not be cancelled because one task failed
 
 ```go
 eg := &errgroup.NewContinue(ctx)
 eg.Go(func (ctx context.Context) {
-    // NOTE: NOTE: 此时 ctx 为 NewContinue 传递的 ctx
+    // NOTE: In this case, ctx is the ctx passed by NewContinue
     // do something
 })
 eg.Wait()
 ```
 
-2. `NewCancel` 此时如果有一个任务失败会导致所有**未进行或进行中**的任务被 cancel
+2. `NewCancel` If one task fails, **all pending or ongoing tasks** will be cancelled
 
 ```go
 eg := errgroup.NewCancel(ctx)
 eg.Go(func (ctx context.Context) {
-    // NOTE: 此时 ctx 是从 WithContext 传递的 ctx 派生出的 ctx
+    // NOTE: At this point ctx is derived from the ctx passed in WithContext
     // do something
 })
 eg.Wait()
 ```
 
-3. 设置最大并行数 SetMaxProcess 对以上使用方式均起效
+3. Setting the maximum number of parallelism SetMaxProcess works for all the above uses
 
 ```go
 eg := errgroup.NewCancel(ctx, WithMaxProcess(2))
@@ -51,9 +54,9 @@ eg.Go(func (ctx context.Context) {
     fmt.Println("task3")
 })
 eg.Wait()
-// NOTE: 此时设置的 WithMaxProcess 为 2, 
-// 添加了三个任务 task1, task2, task3 ,
-// 最初只有2个task运行，直到一个task完成，最后一个task才会开始执行。
+// NOTE: At this point, WithMaxProcess is set to 2,
+// Added task1, task2, task3 ,
+// Initially, only two tasks will run, and the last task will not be executed until one task is complete.
 ```
 
 
