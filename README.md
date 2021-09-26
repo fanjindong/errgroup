@@ -59,4 +59,6 @@ eg.Wait()
 // Initially, only two tasks will run, and the last task will not be executed until one task is complete.
 ```
 
+## Example
 
+- [simple](./example/simple.go)

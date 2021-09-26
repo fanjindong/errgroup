@@ -56,4 +56,6 @@ eg.Wait()
 // 最初只有2个task运行，直到一个task完成，最后一个task才会开始执行。
 ```
 
+## 例子
 
+- [simple](./example/simple.go)
