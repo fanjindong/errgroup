@@ -15,8 +15,12 @@ import (
 )
 
 type fc func(ctx context.Context) error
+type config struct {
+	maxProcess  int
+	ignoreError func(err error) bool
+}
+
 type IGroup interface {
-	maxProcess(int)
 	Go(fc)
 	Wait() error
 }
@@ -27,6 +31,7 @@ type CancelGroup struct {
 	errOnce sync.Once
 	err     error
 	ctx     context.Context
+	config  config
 
 	ch  chan fc
 	chs []fc
@@ -36,7 +41,10 @@ func NewCancel(ctx context.Context, ops ...IOption) IGroup {
 	ctx, cancel := context.WithCancel(ctx)
 	g := &CancelGroup{cancel: cancel, ctx: ctx}
 	for _, op := range ops {
-		op(g)
+		op(&g.config)
+	}
+	if g.config.maxProcess > 0 {
+		g.ch = make(chan fc, g.config.maxProcess)
 	}
 	return g
 }
@@ -81,6 +89,12 @@ func (g *CancelGroup) do(f fc) {
 		g.wg.Done()
 	}()
 	err = f(g.ctx)
+	if err != nil && g.config.ignoreError != nil {
+		// Ignore known errors
+		if g.config.ignoreError(err) {
+			err = nil
+		}
+	}
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
@@ -102,15 +116,12 @@ func (g *CancelGroup) Wait() error {
 	return g.err
 }
 
-func (g *CancelGroup) maxProcess(n int) {
-	g.ch = make(chan fc, n)
-}
-
 type ContinueGroup struct {
 	wg      sync.WaitGroup
 	errOnce sync.Once
 	err     error
 	ctx     context.Context
+	config  config
 
 	ch  chan fc
 	chs []fc
@@ -119,7 +130,10 @@ type ContinueGroup struct {
 func NewContinue(ctx context.Context, ops ...IOption) IGroup {
 	g := &ContinueGroup{ctx: ctx}
 	for _, op := range ops {
-		op(g)
+		op(&g.config)
+	}
+	if g.config.maxProcess > 0 {
+		g.ch = make(chan fc, g.config.maxProcess)
 	}
 	return g
 }
@@ -159,6 +173,12 @@ func (g *ContinueGroup) do(f fc) {
 		g.wg.Done()
 	}()
 	err = f(g.ctx)
+	if err != nil && g.config.ignoreError != nil {
+		// Ignore known errors
+		if g.config.ignoreError(err) {
+			err = nil
+		}
+	}
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
@@ -175,8 +195,4 @@ func (g *ContinueGroup) Wait() error {
 		close(g.ch)
 	}
 	return g.err
-}
-
-func (g *ContinueGroup) maxProcess(n int) {
-	g.ch = make(chan fc, n)
 }

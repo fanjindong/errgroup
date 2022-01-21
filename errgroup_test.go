@@ -3,6 +3,7 @@ package errgroup
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -213,6 +214,59 @@ func TestErrGroup_WithMaxProcess(t *testing.T) {
 			gotErr := tt.args.eg.Wait()
 			if (gotErr != nil) != tt.wantError {
 				t.Errorf("TestErrGroup_Wait gotErr: %v, wantErr: %v", gotErr, tt.wantError)
+			}
+			if number != tt.want {
+				t.Errorf("TestErrGroup_Wait got: %v, want: %v", number, tt.want)
+			}
+		})
+	}
+}
+
+func TestErrGroup_WithIgnoreErr(t *testing.T) {
+	var number int64
+	var ctx context.Context = context.Background()
+	var f = func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			if atomic.AddInt64(&number, 1) == 10 {
+				return fmt.Errorf("ignore error: %v", 10)
+			}
+		}
+		return nil
+	}
+
+	type args struct {
+		eg IGroup
+		n  int
+	}
+	tests := []struct {
+		name      string
+		args      args
+		want      int64
+		wantError bool
+	}{
+		{name: "cancel", args: args{eg: NewCancel(ctx, WithMaxProcess(1)), n: 100}, want: 10, wantError: true},
+		{name: "continue", args: args{eg: NewContinue(ctx), n: 100}, want: 100, wantError: true},
+		{name: "cancelWithIgnoreErr", args: args{eg: NewCancel(ctx, WithIgnoreErr(func(err error) bool {
+			return strings.Contains(err.Error(), "ignore")
+		})), n: 100}, want: 100, wantError: false},
+		{name: "continueWithIgnoreErr", args: args{eg: NewContinue(ctx, WithIgnoreErr(func(err error) bool {
+			return strings.Contains(err.Error(), "ignore")
+		})), n: 100}, want: 100, wantError: false},
+		{name: "cancelWithNotIgnoreErr", args: args{eg: NewCancel(ctx, WithMaxProcess(1), WithIgnoreErr(func(err error) bool { return false })), n: 100}, want: 10, wantError: true},
+		{name: "continueWithNotIgnoreErr", args: args{eg: NewContinue(ctx, WithIgnoreErr(func(err error) bool { return false })), n: 100}, want: 100, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			number = 0
+			for i := 0; i < tt.args.n; i++ {
+				tt.args.eg.Go(f)
+			}
+			gotErr := tt.args.eg.Wait()
+			if (gotErr != nil) != tt.wantError {
+				t.Errorf("WithIgnoreErr gotErr: %v, wantErr: %v", gotErr, tt.wantError)
 			}
 			if number != tt.want {
 				t.Errorf("TestErrGroup_Wait got: %v, want: %v", number, tt.want)
